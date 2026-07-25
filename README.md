@@ -2,6 +2,8 @@
 
 一个面向求职准备的 AI 助手：上传 PDF 简历、粘贴目标岗位 JD，获得匹配分析；随后可以进入文字或视频模拟面试，并生成结构化复盘报告。
 
+**🌐 在线体验：https://hokie-career-tutor-mvp-three.vercel.app**（当前为演示模式，返回模拟内容；在 Vercel 配置 `GEMINI_API_KEY` 后即为真实 AI）
+
 > 当前状态：可运行的全栈 MVP。前端 + Node/Express 后端，Gemini API key 保存在服务端。**无需 API key 也能运行**（自动进入「演示模式」，返回模拟内容），因此可以直接部署一个随时可体验的在线地址。
 
 ## 核心功能
@@ -127,14 +129,25 @@ npm start       # Express 同时提供静态页面与 /api
 
 ## 部署（获得在线体验地址）
 
-本项目是一个普通的 Node Web 服务，可以部署到 Render、Railway、Fly.io 等平台：
+### Vercel（当前在线演示的部署方式）
+
+仓库已内置 `vercel.json` 与 `api/index.js`（Serverless 入口，复用 `server/app.js`）：
+
+```bash
+npm i -g vercel
+vercel --prod
+```
+
+可选：在 Vercel 项目设置中添加环境变量 `GEMINI_API_KEY` 启用真实 AI。
+
+### 其他平台（Render / Railway / Fly.io 等常驻 Node 服务）
 
 - **Build command**: `npm install && npm run build`
 - **Start command**: `npm start`
 - **环境变量**（可选）：`GEMINI_API_KEY`、`GEMINI_MODEL`
 - 平台会注入 `PORT`，服务已自动读取。
 
-部署成功后，把得到的网址写到仓库主页即可。若未配置 `GEMINI_API_KEY`，站点会以演示模式展示完整流程。
+若未配置 `GEMINI_API_KEY`，站点会以演示模式展示完整流程。
 
 ## 项目结构
 
@@ -147,9 +160,13 @@ npm start       # Express 同时提供静态页面与 /api
 │   ├── geminiService.ts       # 前端调用后端 /api/* 的封装（含流式）
 │   └── pdfService.ts          # PDF 文本提取
 ├── server/
-│   ├── index.js               # Express 服务：/api/* + 生产静态页面
+│   ├── index.js               # 本地/常驻 Node 服务：静态页面 + /api
+│   ├── app.js                 # Express 应用（/api 路由，被两种入口复用）
 │   ├── gemini.js              # Gemini 调用与演示模式回退
 │   └── env.js                 # 轻量 .env 加载
+├── api/
+│   └── index.js               # Vercel Serverless 入口
+├── vercel.json                # Vercel 部署配置
 ├── vite.config.ts             # Vite 与 /api 代理配置
 └── package.json
 ```
