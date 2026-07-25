@@ -2,8 +2,8 @@
 import React, { useState, useEffect, useRef } from 'react';
 import ReactMarkdown from 'react-markdown';
 import { extractTextFromPdf } from './services/pdfService';
-import { analyzeResume, startInterviewChat, generateInterviewReport } from './services/geminiService';
-import { ResumeData, AnalysisResult, AppMode, ChatMessage, InterviewType } from './types';
+import { analyzeResume, sendInterviewMessage, generateInterviewReport, fetchStatus } from './services/geminiService';
+import { ResumeData, AnalysisResult, AppMode, ChatMessage, InterviewType, InterviewConfig, Difficulty, InterviewerStyle } from './types';
 
 const IconUpload = () => <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" x2="12" y1="3" y2="15"/></svg>;
 const IconSparkles = () => <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="m12 3-1.912 5.813a2 2 0 0 1-1.275 1.275L3 12l5.813 1.912a2 2 0 0 1 1.275 1.275L12 21l1.912-5.813a2 2 0 0 1 1.275-1.275L21 12l-5.813-1.912a2 2 0 0 1-1.275-1.275L12 3Z"/><path d="M5 3v4"/><path d="M19 17v4"/><path d="M3 5h4"/><path d="M17 19h4"/></svg>;
@@ -16,22 +16,34 @@ const App: React.FC = () => {
   const [mode, setMode] = useState<AppMode>('ANALYZE');
   const [interviewType, setInterviewType] = useState<InterviewType | null>(null);
   const [showModeSelection, setShowModeSelection] = useState(false);
-  
+  const [demoMode, setDemoMode] = useState(false);
+
   const [resume, setResume] = useState<ResumeData | null>(null);
   const [jd, setJd] = useState<string>('');
   const [analysis, setAnalysis] = useState<AnalysisResult>({ content: '', isStreaming: false });
   const [isExtracting, setIsExtracting] = useState(false);
-  
+
+  // Interview configuration
+  const [interviewConfig, setInterviewConfig] = useState<InterviewConfig>({
+    roleFocus: '',
+    difficulty: 'Medium',
+    style: 'Professional',
+  });
+
   // Interview state
-  const [chatSession, setChatSession] = useState<any>(null);
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [inputValue, setInputValue] = useState('');
   const [isChatLoading, setIsChatLoading] = useState(false);
   const [isListening, setIsListening] = useState(false);
-  
+
   const chatEndRef = useRef<HTMLDivElement>(null);
   const videoRef = useRef<HTMLVideoElement>(null);
   const recognitionRef = useRef<any>(null);
+
+  // Load backend status (demo mode banner)
+  useEffect(() => {
+    fetchStatus().then(s => setDemoMode(!!s.demoMode)).catch(() => {});
+  }, []);
 
   // Initialize Speech Recognition
   useEffect(() => {
@@ -120,47 +132,69 @@ const App: React.FC = () => {
     setMode('INTERVIEW');
     setMessages([]);
     setIsChatLoading(true);
-    const session = startInterviewChat(resume.text, jd, type);
-    setChatSession(session);
-    
+
     try {
-      const response = await session.sendMessage({ message: "Hello. I am ready for the interview. Please start." });
-      const responseText = response.text;
-      setMessages([{ role: 'model', parts: [{ text: responseText }] }]);
-      speak(responseText);
+      let fullText = '';
+      setMessages([{ role: 'model', parts: [{ text: '' }] }]);
+      await sendInterviewMessage(
+        {
+          resumeText: resume.text,
+          jd,
+          type,
+          config: interviewConfig,
+          history: [],
+          message: 'Hello. I am ready for the interview. Please start.',
+        },
+        (chunk) => {
+          fullText += chunk;
+          setMessages([{ role: 'model', parts: [{ text: fullText }] }]);
+        }
+      );
+      speak(fullText);
     } catch (e) {
-      alert("Failed to start session.");
+      alert('Failed to start session.');
+      setMode('ANALYZE');
+      setInterviewType(null);
     } finally {
       setIsChatLoading(false);
     }
   };
 
   const sendMessage = async () => {
-    if (!inputValue.trim() || !chatSession || isChatLoading) return;
+    if (!inputValue.trim() || isChatLoading || !resume) return;
     if (isListening) stopListening();
 
-    const userMsg: ChatMessage = { role: 'user', parts: [{ text: inputValue }] };
-    setMessages(prev => [...prev, userMsg]);
     const currentInput = inputValue;
+    const userMsg: ChatMessage = { role: 'user', parts: [{ text: currentInput }] };
+    const historyBeforeSend = messages;
+    setMessages(prev => [...prev, userMsg]);
     setInputValue('');
     setIsChatLoading(true);
 
     try {
-      const stream = await chatSession.sendMessageStream({ message: currentInput });
       let fullText = '';
       setMessages(prev => [...prev, { role: 'model', parts: [{ text: '' }] }]);
-      
-      for await (const chunk of stream) {
-        fullText += chunk.text;
-        setMessages(prev => {
-          const updated = [...prev];
-          updated[updated.length - 1] = { role: 'model', parts: [{ text: fullText }] };
-          return updated;
-        });
-      }
+      await sendInterviewMessage(
+        {
+          resumeText: resume.text,
+          jd,
+          type: interviewType || 'TEXT',
+          config: interviewConfig,
+          history: historyBeforeSend,
+          message: currentInput,
+        },
+        (chunk) => {
+          fullText += chunk;
+          setMessages(prev => {
+            const updated = [...prev];
+            updated[updated.length - 1] = { role: 'model', parts: [{ text: fullText }] };
+            return updated;
+          });
+        }
+      );
       speak(fullText);
     } catch (e) {
-      alert("Connection error.");
+      alert('Connection error.');
     } finally {
       setIsChatLoading(false);
     }
@@ -180,6 +214,18 @@ const App: React.FC = () => {
       recognitionRef.current.stop();
       setIsListening(false);
     }
+  };
+
+  const downloadReport = () => {
+    const blob = new Blob([analysis.content], { type: 'text/markdown;charset=utf-8' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `interview-report-${new Date().toISOString().slice(0, 10)}.md`;
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    URL.revokeObjectURL(url);
   };
 
   const endInterview = async () => {
@@ -211,6 +257,11 @@ const App: React.FC = () => {
           <h1 className="text-xl font-bold tracking-tight">Career Pro AI</h1>
         </div>
         <div className="flex items-center gap-4">
+          {demoMode && (
+            <div className="text-xs font-bold bg-amber-100 text-amber-700 px-3 py-1 rounded-full border border-amber-200" title="No GEMINI_API_KEY configured on the server. Responses are simulated.">
+              DEMO MODE
+            </div>
+          )}
           <div className="text-xs font-mono bg-gray-100 px-3 py-1 rounded-full text-gray-500">
             {mode} {interviewType ? `(${interviewType})` : ''}
           </div>
@@ -221,7 +272,46 @@ const App: React.FC = () => {
       {showModeSelection && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm p-4">
           <div className="bg-white rounded-3xl p-8 max-w-2xl w-full shadow-2xl animate-in zoom-in-95 duration-200">
-            <h2 className="text-2xl font-bold text-center mb-8">Choose Your Interview Format</h2>
+            <h2 className="text-2xl font-bold text-center mb-2">Choose Your Interview Format</h2>
+            <p className="text-center text-sm text-gray-400 mb-6">Customize the session, then pick a format.</p>
+
+            {/* Interview configuration */}
+            <div className="grid sm:grid-cols-3 gap-4 mb-8">
+              <div className="sm:col-span-3">
+                <label className="block text-xs font-bold text-gray-500 uppercase tracking-wider mb-1">Focus Area (optional)</label>
+                <input
+                  value={interviewConfig.roleFocus}
+                  onChange={(e) => setInterviewConfig(c => ({ ...c, roleFocus: e.target.value }))}
+                  placeholder="e.g. System design, React, Behavioral..."
+                  className="w-full border border-gray-200 rounded-xl px-4 py-2.5 text-sm focus:ring-2 focus:ring-indigo-500 outline-none"
+                />
+              </div>
+              <div>
+                <label className="block text-xs font-bold text-gray-500 uppercase tracking-wider mb-1">Difficulty</label>
+                <select
+                  value={interviewConfig.difficulty}
+                  onChange={(e) => setInterviewConfig(c => ({ ...c, difficulty: e.target.value as Difficulty }))}
+                  className="w-full border border-gray-200 rounded-xl px-3 py-2.5 text-sm focus:ring-2 focus:ring-indigo-500 outline-none bg-white"
+                >
+                  <option value="Easy">Easy</option>
+                  <option value="Medium">Medium</option>
+                  <option value="Hard">Hard</option>
+                </select>
+              </div>
+              <div className="sm:col-span-2">
+                <label className="block text-xs font-bold text-gray-500 uppercase tracking-wider mb-1">Interviewer Style</label>
+                <select
+                  value={interviewConfig.style}
+                  onChange={(e) => setInterviewConfig(c => ({ ...c, style: e.target.value as InterviewerStyle }))}
+                  className="w-full border border-gray-200 rounded-xl px-3 py-2.5 text-sm focus:ring-2 focus:ring-indigo-500 outline-none bg-white"
+                >
+                  <option value="Friendly">Friendly</option>
+                  <option value="Professional">Professional</option>
+                  <option value="Tough">Tough</option>
+                </select>
+              </div>
+            </div>
+
             <div className="grid md:grid-cols-2 gap-6">
               <button 
                 onClick={() => initInterview('TEXT')}
@@ -425,7 +515,10 @@ const App: React.FC = () => {
                 )}
 
                 {mode === 'REPORT' && (
-                  <div className="mt-8 flex justify-center">
+                  <div className="mt-8 flex flex-wrap justify-center items-center gap-6">
+                    <button onClick={downloadReport} className="px-6 py-3 bg-indigo-600 text-white rounded-2xl font-bold shadow-lg hover:bg-indigo-700 transition-all active:scale-95">
+                      ↓ Download Report (.md)
+                    </button>
                     <button onClick={() => { setMode('ANALYZE'); setAnalysis({ content: '', isStreaming: false }); }} className="text-indigo-600 font-bold hover:underline flex items-center gap-2">
                       ← Start Over / New Analysis
                     </button>

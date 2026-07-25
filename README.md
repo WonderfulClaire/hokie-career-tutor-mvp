@@ -2,7 +2,7 @@
 
 一个面向求职准备的 AI 助手：上传 PDF 简历、粘贴目标岗位 JD，获得匹配分析；随后可以进入文字或视频模拟面试，并生成结构化复盘报告。
 
-> 当前状态：可运行的 MVP / 学习原型。适合本地体验与继续开发，尚未按生产环境的安全和隐私标准部署。
+> 当前状态：可运行的全栈 MVP。前端 + Node/Express 后端，Gemini API key 保存在服务端。**无需 API key 也能运行**（自动进入「演示模式」，返回模拟内容），因此可以直接部署一个随时可体验的在线地址。
 
 ## 核心功能
 
@@ -53,15 +53,32 @@ AI 面试官会结合简历和 JD：
 
 ## 技术栈
 
-- React 19
-- TypeScript
-- Vite
-- Google Gemini API（`@google/genai`）
+**前端**
+
+- React 19 + TypeScript + Vite
 - React Markdown
-- PDF.js
+- PDF.js（CDN）
 - Tailwind CSS（CDN）
-- Web Speech API
-- MediaDevices API
+- Web Speech API / MediaDevices API
+
+**后端**
+
+- Node.js + Express
+- Google Gemini API（`@google/genai`），仅在服务端调用
+- 演示模式：未配置 API key 时返回模拟内容
+
+### 架构
+
+```text
+浏览器 (React)  ──fetch──▶  Express 后端 (/api/*)  ──▶  Gemini API
+                                     │
+                              GEMINI_API_KEY 只存在于服务端
+```
+
+- `/api/analyze`、`/api/interview` 以纯文本流式返回。
+- `/api/report` 返回完整报告。
+- `/api/status` 返回是否处于演示模式（前端据此显示 DEMO MODE 标签）。
+- 模拟面试改为无状态：前端每轮把完整对话历史发给后端。
 
 ## 本地运行
 
@@ -80,29 +97,44 @@ cd hokie-career-tutor-mvp
 npm install
 ```
 
-在项目根目录创建 `.env.local`：
+（可选）启用真实 AI：复制 `.env.example` 为 `.env` 并填入密钥。**不填也能跑**，只是会以演示模式运行：
 
 ```env
 GEMINI_API_KEY=your_gemini_api_key
+# 可选：GEMINI_MODEL=gemini-2.5-flash
+# 可选：PORT=8787
 ```
 
-启动开发服务器：
+### 开发模式（前后端一起启动）
 
 ```bash
 npm run dev
 ```
 
-默认访问地址：
+- 前端：http://localhost:3000 （Vite，已将 `/api` 代理到后端）
+- 后端：http://localhost:8787
 
-```text
-http://localhost:3000
-```
+访问 http://localhost:3000 即可使用。
 
-构建生产版本：
+### 生产构建与启动（单一 Node 服务）
 
 ```bash
-npm run build
+npm run build   # 构建前端到 dist/
+npm start       # Express 同时提供静态页面与 /api
 ```
+
+默认访问 http://localhost:8787
+
+## 部署（获得在线体验地址）
+
+本项目是一个普通的 Node Web 服务，可以部署到 Render、Railway、Fly.io 等平台：
+
+- **Build command**: `npm install && npm run build`
+- **Start command**: `npm start`
+- **环境变量**（可选）：`GEMINI_API_KEY`、`GEMINI_MODEL`
+- 平台会注入 `PORT`，服务已自动读取。
+
+部署成功后，把得到的网址写到仓库主页即可。若未配置 `GEMINI_API_KEY`，站点会以演示模式展示完整流程。
 
 ## 项目结构
 
@@ -112,9 +144,13 @@ npm run build
 ├── index.tsx                  # React 入口
 ├── types.ts                   # 共享类型
 ├── services/
-│   ├── geminiService.ts       # 简历分析、模拟面试和报告生成
+│   ├── geminiService.ts       # 前端调用后端 /api/* 的封装（含流式）
 │   └── pdfService.ts          # PDF 文本提取
-├── vite.config.ts             # Vite 与环境变量配置
+├── server/
+│   ├── index.js               # Express 服务：/api/* + 生产静态页面
+│   ├── gemini.js              # Gemini 调用与演示模式回退
+│   └── env.js                 # 轻量 .env 加载
+├── vite.config.ts             # Vite 与 /api 代理配置
 └── package.json
 ```
 
@@ -122,10 +158,9 @@ npm run build
 
 这个项目会处理简历、岗位描述和模拟面试内容。使用前请注意：
 
-- 简历文本和面试内容会发送给配置的 Gemini API。
+- 简历文本和面试内容会经由后端发送给配置的 Gemini API。
 - 不要上传包含身份证号、家庭住址、私人电话等非必要敏感信息的简历。
-- 当前 Vite 配置会把 `GEMINI_API_KEY` 注入浏览器端代码，**只适合本地原型，不适合直接公开部署**。
-- 如果要上线，应将 Gemini API 调用迁移到受控后端，并加入鉴权、限流、日志脱敏、数据保留策略和密钥轮换。
+- `GEMINI_API_KEY` 现已保留在**服务端**，不会注入浏览器。仍建议在生产环境中补充鉴权、限流、日志脱敏与密钥轮换。
 - 摄像头画面仅用于本地预览；当前代码没有主动上传视频流，但仍应只在可信环境中授权摄像头。
 
 ## 当前限制
@@ -139,12 +174,13 @@ npm run build
 
 ## 后续路线
 
-- [ ] 把 Gemini 调用迁移到后端，保护 API key。
+- [x] 把 Gemini 调用迁移到后端，保护 API key。
+- [x] 增加面试难度、职位聚焦和面试官风格设置。
+- [x] 支持将复盘报告导出为文件。
 - [ ] 加入 OCR，支持扫描版简历。
 - [ ] 支持保存多份 JD 和多轮面试记录。
-- [ ] 增加岗位类型、难度和面试官风格设置。
 - [ ] 为 Prompt、PDF 解析和核心交互补充测试。
-- [ ] 增加数据删除、导出和隐私设置。
+- [ ] 在生产部署中补充鉴权、限流与数据删除/导出。
 - [ ] 补充产品截图或在线演示。
 
 ## License
