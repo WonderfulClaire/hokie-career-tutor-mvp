@@ -1,21 +1,26 @@
-import { ChatMessage, InterviewType, InterviewConfig } from "../types";
+import { ChatMessage, InterviewType, InterviewConfig, Lang } from "../types";
 
 /**
  * Frontend service layer.
  * All AI calls now go through our backend (/api/*), which keeps the
  * Gemini API key on the server. This module never touches the API key.
+ *
+ * Streaming calls accept an optional AbortSignal so the UI can offer
+ * a "stop generating" button.
  */
 
 // Read a plain-text streaming response chunk by chunk.
 async function streamText(
   url: string,
   body: unknown,
-  onChunk: (text: string) => void
+  onChunk: (text: string) => void,
+  signal?: AbortSignal
 ): Promise<string> {
   const res = await fetch(url, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(body),
+    signal,
   });
 
   if (!res.ok || !res.body) {
@@ -48,9 +53,11 @@ async function streamText(
 export const analyzeResume = async (
   resumeText: string,
   jobDescription: string,
-  onChunk: (text: string) => void
+  lang: Lang,
+  onChunk: (text: string) => void,
+  signal?: AbortSignal
 ): Promise<void> => {
-  await streamText("/api/analyze", { resumeText, jobDescription }, onChunk);
+  await streamText("/api/analyze", { resumeText, jobDescription, lang }, onChunk, signal);
 };
 
 /**
@@ -66,19 +73,22 @@ export const sendInterviewMessage = async (
     config: InterviewConfig;
     history: ChatMessage[];
     message: string;
+    lang: Lang;
   },
-  onChunk: (text: string) => void
+  onChunk: (text: string) => void,
+  signal?: AbortSignal
 ): Promise<string> => {
-  return streamText("/api/interview", params, onChunk);
+  return streamText("/api/interview", params, onChunk, signal);
 };
 
 export const generateInterviewReport = async (
-  history: ChatMessage[]
+  history: ChatMessage[],
+  lang: Lang
 ): Promise<string> => {
   const res = await fetch("/api/report", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ history }),
+    body: JSON.stringify({ history, lang }),
   });
   if (!res.ok) throw new Error("Report failed.");
   const data = await res.json();

@@ -1,4 +1,6 @@
 
+export type Lang = 'en' | 'zh';
+
 export interface AnalysisResult {
   content: string;
   isStreaming: boolean;

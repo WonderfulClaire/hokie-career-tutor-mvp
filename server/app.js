@@ -25,13 +25,13 @@ function setupTextStream(res) {
 }
 
 app.post("/api/analyze", async (req, res) => {
-  const { resumeText, jobDescription } = req.body || {};
+  const { resumeText, jobDescription, lang } = req.body || {};
   if (!resumeText || !jobDescription) {
     return res.status(400).json({ error: "resumeText and jobDescription are required" });
   }
   try {
     setupTextStream(res);
-    for await (const chunk of streamAnalysis(resumeText, jobDescription)) {
+    for await (const chunk of streamAnalysis(resumeText, jobDescription, lang)) {
       res.write(chunk);
     }
     res.end();
@@ -43,7 +43,7 @@ app.post("/api/analyze", async (req, res) => {
 });
 
 app.post("/api/interview", async (req, res) => {
-  const { resumeText, jd, type, config, history, message } = req.body || {};
+  const { resumeText, jd, type, config, history, message, lang } = req.body || {};
   try {
     setupTextStream(res);
     for await (const chunk of streamInterview({
@@ -53,6 +53,7 @@ app.post("/api/interview", async (req, res) => {
       config,
       history,
       message,
+      lang,
     })) {
       res.write(chunk);
     }
@@ -65,9 +66,9 @@ app.post("/api/interview", async (req, res) => {
 });
 
 app.post("/api/report", async (req, res) => {
-  const { history } = req.body || {};
+  const { history, lang } = req.body || {};
   try {
-    const report = await generateReport(history || []);
+    const report = await generateReport(history || [], lang);
     res.json({ report });
   } catch (err) {
     console.error("/api/report error:", err);
